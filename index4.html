@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interactive Three.js Particles</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background: #000;
+            font-family: sans-serif;
+        }
+
+        #ui {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: white;
+            z-index: 100;
+            pointer-events: none;
+            text-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
+        }
+
+        canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+        }
+
+        /* The Camera Preview Window */
+        #video-preview {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            width: 200px;
+            /* Adjust size as needed */
+            height: auto;
+            border: 2px solid #00ffcc;
+            border-radius: 12px;
+            transform: scaleX(-1);
+            /* Mirror effect */
+            background: #222;
+            z-index: 1000;
+            box-shadow: 0 0 20px rgba(0, 0, 0, 0.5);
+        }
+
+        .label {
+            font-weight: bold;
+            color: #00ffcc;
+        }
+
+        .hint {
+            font-size: 0.9em;
+            opacity: 0.8;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div id="ui">
+        <h2>Particle Morph v2</h2>
+        <p id="status">Initializing Camera...</p>
+        <p>Current Shape: <span id="shape-name" class="label">Cloud</span></p>
+        <p class="hint">Move hand <span class="label">UP</span> for Heart | <span class="label">DOWN</span> for Saturn
+        </p>
+        <p class="hint">Quick <span class="label">PINCH</span> to Burst</p>
+    </div>
+
+    <video id="video-preview" autoplay playsinline></video>
+
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+    <script type="importmap">
+        { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+
+        const PARTICLE_COUNT = 12000;
+        let isBursting = false;
+
+        // --- SCENE SETUP ---
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+        camera.position.z = 25;
+
+        // --- PARTICLE ATTRIBUTES ---
+        const geometry = new THREE.BufferGeometry();
+        const positions = new Float32Array(PARTICLE_COUNT * 3);
+        const targetPositions = new Float32Array(PARTICLE_COUNT * 3);
+        const velocities = new Float32Array(PARTICLE_COUNT * 3);
+        const colors = new Float32Array(PARTICLE_COUNT * 3);
+
+        for (let i = 0; i < PARTICLE_COUNT; i++) {
+            const i3 = i * 3;
+            positions[i3] = (Math.random() - 0.5) * 40;
+            positions[i3 + 1] = (Math.random() - 0.5) * 40;
+            positions[i3 + 2] = (Math.random() - 0.5) * 40;
+            colors[i3] = 0.5; colors[i3 + 1] = 0.8; colors[i3 + 2] = 1.0;
+        }
+
+        geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+        const material = new THREE.PointsMaterial({
+            size: 0.12,
+            vertexColors: true,
+            blending: THREE.AdditiveBlending,
+            transparent: true,
+            opacity: 0.8,
+            depthWrite: false
+        });
+
+        const points = new THREE.Points(geometry, material);
+        scene.add(points);
+
+        // --- SHAPE LOGIC ---
+        function createShape(type) {
+            const label = document.getElementById('shape-name');
+            if (label.innerText !== type.toUpperCase()) {
+                label.innerText = type.toUpperCase();
+            }
+
+            if (type !== 'burst') isBursting = false;
+
+            for (let i = 0; i < PARTICLE_COUNT; i++) {
+                const i3 = i * 3;
+                let x, y, z;
+
+                if (type === 'heart') {
+                    const t = Math.random() * Math.PI * 2;
+                    x = 16 * Math.pow(Math.sin(t), 3);
+                    y = 13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t);
+                    z = (Math.random() - 0.5) * 5;
+                    targetPositions.set([x * 0.6, y * 0.6, z * 0.6], i3);
+                } else if (type === 'saturn') {
+                    if (i < PARTICLE_COUNT * 0.4) {
+                        const phi = Math.random() * Math.PI * 2;
+                        const theta = Math.acos((Math.random() * 2) - 1);
+                        targetPositions.set([7 * Math.sin(theta) * Math.cos(phi), 7 * Math.sin(theta) * Math.sin(phi), 7 * Math.cos(theta)], i3);
+                    } else {
+                        const r = 10 + Math.random() * 5;
+                        const a = Math.random() * Math.PI * 2;
+                        targetPositions.set([Math.cos(a) * r, (Math.random() - 0.5) * 0.5, Math.sin(a) * r], i3);
+                    }
+                } else if (type === 'burst') {
+                    isBursting = true;
+                    const r = Math.random() * 2;
+                    const theta = Math.random() * Math.PI * 2;
+                    const phi = Math.random() * Math.PI;
+                    velocities[i3] = Math.sin(phi) * Math.cos(theta) * r;
+                    velocities[i3 + 1] = Math.sin(phi) * Math.sin(theta) * r;
+                    velocities[i3 + 2] = Math.cos(phi) * r;
+                } else {
+                    targetPositions.set([(Math.random() - 0.5) * 30, (Math.random() - 0.5) * 30, (Math.random() - 0.5) * 30], i3);
+                }
+            }
+        }
+
+        // --- HAND TRACKING ---
+        const videoElement = document.getElementById('video-preview');
+        const hands = new Hands({ locateFile: (f) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}` });
+
+        hands.setOptions({
+            maxNumHands: 1,
+            modelComplexity: 1,
+            minDetectionConfidence: 0.6,
+            minTrackingConfidence: 0.6
+        });
+
+        hands.onResults((res) => {
+            const status = document.getElementById('status');
+            if (res.multiHandLandmarks && res.multiHandLandmarks.length > 0) {
+                status.innerText = "Hand Detected";
+                const lm = res.multiHandLandmarks[0];
+                const index = lm[8];
+                const thumb = lm[4];
+
+                const hX = (index.x - 0.5) * -45;
+                const hY = (index.y - 0.5) * -35;
+                points.position.lerp(new THREE.Vector3(hX, hY, 0), 0.1);
+
+                const dist = Math.hypot(index.x - thumb.x, index.y - thumb.y);
+                if (dist < 0.04 && !isBursting) {
+                    createShape('burst');
+                } else if (dist > 0.1) {
+                    if (index.y < 0.25) createShape('heart');
+                    else if (index.y > 0.75) createShape('saturn');
+                    else if (!isBursting) createShape('cloud');
+                }
+                material.color.setHSL(index.x, 0.7, 0.6);
+            } else {
+                status.innerText = "Searching for hand...";
+            }
+        });
+
+        const cameraPipe = new Camera(videoElement, {
+            onFrame: async () => { await hands.send({ image: videoElement }); },
+            width: 640, height: 480
+        });
+        cameraPipe.start();
+
+        // --- MAIN LOOP ---
+        function animate() {
+            requestAnimationFrame(animate);
+            const pos = geometry.attributes.position.array;
+
+            for (let i = 0; i < PARTICLE_COUNT; i++) {
+                const i3 = i * 3;
+                if (isBursting) {
+                    pos[i3] += velocities[i3];
+                    pos[i3 + 1] += velocities[i3 + 1];
+                    pos[i3 + 2] += velocities[i3 + 2];
+                    velocities[i3] *= 0.98; velocities[i3 + 1] *= 0.98; velocities[i3 + 2] *= 0.98;
+                } else {
+                    pos[i3] += (targetPositions[i3] - pos[i3]) * 0.08;
+                    pos[i3 + 1] += (targetPositions[i3 + 1] - pos[i3 + 1]) * 0.08;
+                    pos[i3 + 2] += (targetPositions[i3 + 2] - pos[i3 + 2]) * 0.08;
+                }
+            }
+
+            geometry.attributes.position.needsUpdate = true;
+            points.rotation.y += 0.005;
+            renderer.render(scene, camera);
+        }
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        animate();
+        createShape('cloud');
+    </script>
+</body>
+
+</html>
